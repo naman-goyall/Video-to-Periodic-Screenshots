@@ -10,7 +10,7 @@ def extract_screenshots_and_create_document(video_path, interval, document_name)
     """Extracts frames from the video and directly inserts them into a Word document."""
     # Initialize Word document
     doc = Document()
-    doc.add_heading('Video Screenshots', level=1)
+    # doc.add_heading('Video Screenshots', level=1)
 
     # Open the video
     video = cv2.VideoCapture(video_path)
@@ -31,8 +31,8 @@ def extract_screenshots_and_create_document(video_path, interval, document_name)
             buffer.seek(0)
 
             # Add the image to the Word document
-            doc.add_paragraph(f'Image {count + 1}')
-            doc.add_picture(buffer, width=Inches(6))
+            # doc.add_paragraph(f'Image {count + 1}')
+            doc.add_picture(buffer, width=Inches(7))
             count += 1
 
         success, frame = video.read()
