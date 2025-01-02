@@ -2,7 +2,7 @@ import cv2
 import os
 from docx import Document
 from docx.shared import Inches
-from tkinter import Tk, filedialog
+from tkinter import Tk, filedialog, Button, Label, StringVar, messagebox
 
 def clear_folder(folder_path):
     """Deletes all files in the specified folder."""
@@ -19,21 +19,17 @@ def clear_folder(folder_path):
 def extract_screenshots(video_path, interval, output_folder):
     """Extracts screenshots from a video at specified intervals."""
     os.makedirs(output_folder, exist_ok=True)
-
-    # Load video
     video = cv2.VideoCapture(video_path)
     fps = int(video.get(cv2.CAP_PROP_FPS))
     frame_interval = interval * fps
     count = 0
     success, frame = video.read()
 
-    # Extract frames
     while success:
         frame_number = int(video.get(cv2.CAP_PROP_POS_FRAMES))
         if frame_number % frame_interval == 0:
             file_path = os.path.join(output_folder, f'screenshot_{count}.jpg')
             cv2.imwrite(file_path, frame)
-            print(f"Saved {file_path}")
             count += 1
         success, frame = video.read()
 
@@ -48,33 +44,46 @@ def create_document_with_screenshots(output_folder, document_name):
         if file_name.endswith('.jpg'):
             file_path = os.path.join(output_folder, file_name)
             doc.add_paragraph(f'Image: {file_name}')
-            # Increased the image size
             doc.add_picture(file_path, width=Inches(6))
 
     doc.save(document_name)
     print(f"Document saved as {document_name}")
 
-def select_video_file():
-    """Opens a file dialog to select a video file."""
-    root = Tk()
-    root.withdraw()  # Hide the main tkinter window
-    file_path = filedialog.askopenfilename(
+def select_video():
+    """Select a video file and process it."""
+    video_path = filedialog.askopenfilename(
         title="Select Video File",
         filetypes=[("MP4 Files", "*.mp4"), ("All Files", "*.*")]
     )
-    root.destroy()  # Close tkinter window
-    return file_path
+    if not video_path:
+        messagebox.showwarning("No File", "No video file selected!")
+        return
 
-# Parameters
-output_folder = 'screenshots'
-document_name = 'VideoScreenshots.docx'
-interval = 5  # Interval in seconds
+    # Ask for output directory
+    output_path = filedialog.askdirectory(
+        title="Select Output Folder"
+    )
+    if not output_path:
+        messagebox.showwarning("No Folder", "No output folder selected!")
+        return
 
-# Main Process
-video_path = select_video_file()  # Drag-and-drop functionality to select video
-if video_path:
-    clear_folder(output_folder)  # Clear screenshots folder before starting
-    extract_screenshots(video_path, interval, output_folder)
-    create_document_with_screenshots(output_folder, document_name)
-else:
-    print("No video file selected. Exiting.")
+    clear_folder(output_path)
+    extract_screenshots(video_path, interval, output_path)
+    document_path = os.path.join(output_path, "VideoScreenshots.docx")
+    create_document_with_screenshots(output_path, document_path)
+
+    messagebox.showinfo("Success", f"Processing complete. Document saved at:\n{document_path}")
+
+# Tkinter Frontend
+root = Tk()
+root.title("Video Screenshot Extractor")
+root.geometry("400x200")
+
+interval = 5  # Seconds
+
+Label(root, text="Video Screenshot Extractor", font=("Arial", 16)).pack(pady=10)
+Button(root, text="Select Video and Process", command=select_video).pack(pady=10)
+Button(root, text="Exit", command=root.quit).pack(pady=10)
+
+root.mainloop()
+
