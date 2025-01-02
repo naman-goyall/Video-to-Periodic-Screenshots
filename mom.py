@@ -1,20 +1,28 @@
 import cv2
 import os
-# from moviepy.editor import VideoFileClip
 from docx import Document
 from docx.shared import Inches
+from tkinter import Tk, filedialog
+
+def clear_folder(folder_path):
+    """Deletes all files in the specified folder."""
+    if os.path.exists(folder_path):
+        for file in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, file)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        print(f"Cleared folder: {folder_path}")
+    else:
+        os.makedirs(folder_path)
+        print(f"Created folder: {folder_path}")
 
 def extract_screenshots(video_path, interval, output_folder):
-    # Create output folder if it doesn't exist
+    """Extracts screenshots from a video at specified intervals."""
     os.makedirs(output_folder, exist_ok=True)
 
     # Load video
     video = cv2.VideoCapture(video_path)
     fps = int(video.get(cv2.CAP_PROP_FPS))
-    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = frame_count // fps
-
-    # Calculate frame interval
     frame_interval = interval * fps
     count = 0
     success, frame = video.read()
@@ -32,7 +40,7 @@ def extract_screenshots(video_path, interval, output_folder):
     video.release()
 
 def create_document_with_screenshots(output_folder, document_name):
-    # Create a Word document
+    """Creates a Word document with screenshots."""
     doc = Document()
     doc.add_heading('Video Screenshots', level=1)
 
@@ -40,17 +48,33 @@ def create_document_with_screenshots(output_folder, document_name):
         if file_name.endswith('.jpg'):
             file_path = os.path.join(output_folder, file_name)
             doc.add_paragraph(f'Image: {file_name}')
-            doc.add_picture(file_path, width=Inches(4))
+            # Increased the image size
+            doc.add_picture(file_path, width=Inches(6))
 
     doc.save(document_name)
     print(f"Document saved as {document_name}")
 
+def select_video_file():
+    """Opens a file dialog to select a video file."""
+    root = Tk()
+    root.withdraw()  # Hide the main tkinter window
+    file_path = filedialog.askopenfilename(
+        title="Select Video File",
+        filetypes=[("MP4 Files", "*.mp4"), ("All Files", "*.*")]
+    )
+    root.destroy()  # Close tkinter window
+    return file_path
+
 # Parameters
-video_path = '/Users/namangoyal/Downloads/Spike Prime Soccer Robot With Shooting Arm With Building Instructions.mp4'  # Path to the MP4 file
-interval = 5  # Interval in seconds
 output_folder = 'screenshots'
 document_name = 'VideoScreenshots.docx'
+interval = 5  # Interval in seconds
 
-# Process
-extract_screenshots(video_path, interval, output_folder)
-create_document_with_screenshots(output_folder, document_name)
+# Main Process
+video_path = select_video_file()  # Drag-and-drop functionality to select video
+if video_path:
+    clear_folder(output_folder)  # Clear screenshots folder before starting
+    extract_screenshots(video_path, interval, output_folder)
+    create_document_with_screenshots(output_folder, document_name)
+else:
+    print("No video file selected. Exiting.")
