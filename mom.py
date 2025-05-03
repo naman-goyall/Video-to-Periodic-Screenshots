@@ -1,10 +1,16 @@
 import cv2
 from docx import Document
 from docx.shared import Inches
-from tkinter import Tk, filedialog, Button, Label, messagebox
+from tkinter import Tk, filedialog, Button, Label, Entry, StringVar, messagebox, Frame
 import numpy as np
 from io import BytesIO
 from PIL import Image
+import os
+import tempfile
+import threading
+import re
+import subprocess
+import sys
 
 def extract_screenshots_and_create_document(video_path, interval, document_name):
     """Extracts frames from the video and directly inserts them into a Word document."""
@@ -42,6 +48,83 @@ def extract_screenshots_and_create_document(video_path, interval, document_name)
     # Save the Word document
     doc.save(document_name)
     print(f"Document saved as {document_name}")
+    return count
+
+def validate_youtube_url(url):
+    """Validate and normalize YouTube URL."""
+    # Standard YouTube watch URL with query parameters
+    watch_pattern = r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?(?:[^&]+&)*v=([0-9A-Za-z_-]{11})(?:&[^&]+)*'
+    match = re.search(watch_pattern, url)
+    if match:
+        video_id = match.group(1)
+        return f'https://www.youtube.com/watch?v={video_id}', video_id
+    
+    # Other common YouTube URL patterns
+    other_patterns = [
+        r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([0-9A-Za-z_-]{11})',
+        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([0-9A-Za-z_-]{11})',
+        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/v\/([0-9A-Za-z_-]{11})'
+    ]
+    
+    for pattern in other_patterns:
+        match = re.search(pattern, url)
+        if match:
+            video_id = match.group(1)
+            return f'https://www.youtube.com/watch?v={video_id}', video_id
+    
+    # If we get here, no valid YouTube URL pattern was found
+    return None, None
+
+def download_youtube_video(youtube_url, temp_dir):
+    """Download YouTube video to a temporary file using yt-dlp."""
+    try:
+        # Validate and normalize the URL
+        normalized_url, video_id = validate_youtube_url(youtube_url)
+        if not normalized_url:
+            return None, "Invalid YouTube URL format. Please use a standard YouTube URL like https://www.youtube.com/watch?v=VIDEO_ID or https://youtu.be/VIDEO_ID"
+        
+        print(f"Attempting to download video ID: {video_id}")
+        
+        # Create output filename
+        temp_file = os.path.join(temp_dir, f"youtube_video_{video_id}.mp4")
+        
+        # Build yt-dlp command
+        command = [
+            sys.executable, '-m', 'yt_dlp',
+            '--format', 'mp4',
+            '--output', temp_file,
+            '--no-playlist',
+            '--no-warnings',
+            normalized_url
+        ]
+        
+        # Run yt-dlp as a subprocess
+        process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        # Check if download was successful
+        if process.returncode != 0:
+            error_msg = process.stderr if process.stderr else "Unknown error occurred"
+            print(f"Download error: {error_msg}")
+            return None, f"Failed to download video: {error_msg}"
+        
+        # Check if file exists
+        if not os.path.exists(temp_file):
+            return None, "Download completed but file was not created"
+        
+        # Try to get title from output or just use video ID
+        title_match = re.search(r'Destination: .*\[info\] (.+?)\.', process.stdout)
+        title = title_match.group(1) if title_match else f"YouTube Video {video_id}"
+        
+        return temp_file, title
+    except Exception as e:
+        error_message = str(e)
+        print(f"YouTube download error: {error_message}")
+        return None, f"Failed to download video: {error_message}"
 
 def select_video():
     """Select a video file and process it."""
@@ -53,6 +136,10 @@ def select_video():
         messagebox.showwarning("No File", "No video file selected!")
         return
 
+    process_selected_video(video_path)
+
+def process_selected_video(video_path):
+    """Process a selected video file."""
     # Ask for output file name and location
     document_path = filedialog.asksaveasfilename(
         title="Save Word Document As",
@@ -63,20 +150,156 @@ def select_video():
         messagebox.showwarning("No File", "No save location selected!")
         return
 
-    # Process the video
-    extract_screenshots_and_create_document(video_path, interval, document_path)
+    # Get interval value
+    try:
+        interval_value = int(interval_var.get())
+        if interval_value <= 0:
+            raise ValueError("Interval must be positive")
+    except ValueError:
+        messagebox.showerror("Invalid Input", "Please enter a valid positive number for interval")
+        return
 
-    messagebox.showinfo("Success", f"Processing complete. Document saved at:\n{document_path}")
+    # Update status
+    status_var.set("Processing video... Please wait")
+    root.update()
+
+    # Process the video in a separate thread
+    def process_thread():
+        try:
+            frames_count = extract_screenshots_and_create_document(video_path, interval_value, document_path)
+            root.after(0, lambda: messagebox.showinfo("Success", 
+                                               f"Processing complete!\n{frames_count} screenshots captured.\nDocument saved at:\n{document_path}"))
+            root.after(0, lambda: status_var.set("Ready"))
+        except Exception as e:
+            root.after(0, lambda: messagebox.showerror("Error", f"An error occurred: {str(e)}"))
+            root.after(0, lambda: status_var.set("Error occurred"))
+
+    threading.Thread(target=process_thread).start()
+
+def process_youtube_link():
+    """Download YouTube video and process it."""
+    youtube_url = youtube_url_var.get().strip()
+    if not youtube_url:
+        messagebox.showwarning("No URL", "Please enter a YouTube URL!")
+        return
+    
+    # Validate URL format first to provide immediate feedback
+    normalized_url, _ = validate_youtube_url(youtube_url)
+    if not normalized_url:
+        messagebox.showerror("Invalid URL", "Please enter a valid YouTube URL\nExample formats:\n- https://www.youtube.com/watch?v=VIDEO_ID\n- https://youtu.be/VIDEO_ID")
+        return
+    
+    # Update status
+    status_var.set("Downloading YouTube video... Please wait")
+    root.update()
+    
+    # Create temporary directory
+    temp_dir = tempfile.mkdtemp()
+    
+    # Run in a separate thread to keep UI responsive
+    def download_and_process():
+        try:
+            # Download the video
+            video_path, video_title = download_youtube_video(youtube_url, temp_dir)
+            
+            if not video_path:
+                root.after(0, lambda: messagebox.showerror("Download Error", f"Failed to download video: {video_title}"))
+                root.after(0, lambda: status_var.set("Download failed"))
+                return
+            
+            root.after(0, lambda: status_var.set(f"Downloaded: {video_title}\nSelecting save location..."))
+            
+            # Ask for output file name and location
+            def select_output():
+                document_path = filedialog.asksaveasfilename(
+                    title="Save Word Document As",
+                    defaultextension=".docx",
+                    filetypes=[("Word Document", "*.docx")]
+                )
+                if not document_path:
+                    messagebox.showwarning("No File", "No save location selected!")
+                    status_var.set("Ready")
+                    return
+                
+                # Get interval value
+                try:
+                    interval_value = int(interval_var.get())
+                    if interval_value <= 0:
+                        raise ValueError("Interval must be positive")
+                except ValueError:
+                    messagebox.showerror("Invalid Input", "Please enter a valid positive number for interval")
+                    status_var.set("Ready")
+                    return
+                
+                # Process the downloaded video
+                status_var.set(f"Processing video: {video_title}...")
+                
+                try:
+                    frames_count = extract_screenshots_and_create_document(video_path, interval_value, document_path)
+                    messagebox.showinfo("Success", 
+                                       f"Processing complete!\n{frames_count} screenshots captured.\nDocument saved at:\n{document_path}")
+                except Exception as e:
+                    messagebox.showerror("Processing Error", f"An error occurred while processing: {str(e)}")
+                
+                # Clean up
+                try:
+                    os.remove(video_path)
+                    os.rmdir(temp_dir)
+                except:
+                    pass
+                
+                status_var.set("Ready")
+            
+            root.after(0, select_output)
+            
+        except Exception as e:
+            root.after(0, lambda: messagebox.showerror("Error", f"An error occurred: {str(e)}"))
+            root.after(0, lambda: status_var.set("Error occurred"))
+
+    threading.Thread(target=download_and_process).start()
 
 # Tkinter Frontend
 root = Tk()
 root.title("Video Screenshot Extractor")
-root.geometry("400x200")
+root.geometry("500x350")
 
-interval = 5  # Seconds
+# Variables
+interval_var = StringVar(value="5")  # Default interval
+youtube_url_var = StringVar()
+status_var = StringVar(value="Ready")
 
-Label(root, text="Video Screenshot Extractor", font=("Arial", 16)).pack(pady=10)
-Button(root, text="Select Video and Process", command=select_video).pack(pady=10)
-Button(root, text="Exit", command=root.quit).pack(pady=10)
+# Main frame
+main_frame = Frame(root, padx=20, pady=20)
+main_frame.pack(fill="both", expand=True)
+
+# Title
+Label(main_frame, text="Video Screenshot Extractor", font=("Arial", 16, "bold")).pack(pady=10)
+
+# Interval setting
+interval_frame = Frame(main_frame)
+interval_frame.pack(fill="x", pady=5)
+Label(interval_frame, text="Interval (seconds):").pack(side="left", padx=5)
+Entry(interval_frame, textvariable=interval_var, width=5).pack(side="left", padx=5)
+
+# YouTube URL input
+youtube_frame = Frame(main_frame)
+youtube_frame.pack(fill="x", pady=10)
+Label(youtube_frame, text="YouTube URL:").pack(side="left", padx=5)
+Entry(youtube_frame, textvariable=youtube_url_var, width=40).pack(side="left", padx=5, fill="x", expand=True)
+
+# Buttons
+button_frame = Frame(main_frame)
+button_frame.pack(fill="x", pady=10)
+Button(button_frame, text="Process YouTube Link", command=process_youtube_link, 
+       bg="#e6e6e6", padx=10).pack(pady=5, fill="x")
+Button(button_frame, text="Select Local Video", command=select_video,
+       bg="#e6e6e6", padx=10).pack(pady=5, fill="x")
+Button(button_frame, text="Exit", command=root.quit,
+       bg="#e6e6e6", padx=10).pack(pady=5, fill="x")
+
+# Status bar
+status_frame = Frame(main_frame)
+status_frame.pack(fill="x", pady=10)
+Label(status_frame, textvariable=status_var, bd=1, relief="sunken", anchor="w").pack(fill="x")
 
 root.mainloop()

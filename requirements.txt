@@ -1,3 +1,7 @@
 opencv-python
 python-docx
 tk
+numpy
+Pillow
+pytube>=15.0.0
+yt-dlp
