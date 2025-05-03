@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-def extract_screenshots_and_create_document(video_path, interval, document_name):
+def extract_screenshots_and_create_document(video_path, interval, document_name, start_time=0, end_time=None):
     """Extracts frames from the video and directly inserts them into a Word document."""
     # Initialize Word document
     doc = Document()
@@ -21,14 +21,27 @@ def extract_screenshots_and_create_document(video_path, interval, document_name)
     # Open the video
     video = cv2.VideoCapture(video_path)
     fps = int(video.get(cv2.CAP_PROP_FPS))
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_interval = interval * fps
     count = 0
+    
+    # Calculate start and end frames
+    start_frame = int(start_time * fps)
+    if end_time is not None:
+        end_frame = min(int(end_time * fps), total_frames)
+    else:
+        end_frame = total_frames
+    
+    # Set video position to start frame
+    video.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     success, frame = video.read()
 
     # Process video frames
-    while success:
+    while success and video.get(cv2.CAP_PROP_POS_FRAMES) <= end_frame:
         frame_number = int(video.get(cv2.CAP_PROP_POS_FRAMES))
-        if frame_number % frame_interval == 0:
+        relative_frame = frame_number - start_frame
+        
+        if relative_frame % frame_interval == 0:
             # Convert frame to an image in memory
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(frame_rgb)
@@ -158,6 +171,33 @@ def process_selected_video(video_path):
     except ValueError:
         messagebox.showerror("Invalid Input", "Please enter a valid positive number for interval")
         return
+    
+    # Get start time in seconds
+    try:
+        start_min = int(start_min_var.get()) if start_min_var.get() else 0
+        start_sec = int(start_sec_var.get()) if start_sec_var.get() else 0
+        if start_min < 0 or start_sec < 0 or start_sec >= 60:
+            raise ValueError("Invalid start time")
+        start_time = start_min * 60 + start_sec
+    except ValueError:
+        messagebox.showerror("Invalid Input", "Please enter valid numbers for start time")
+        return
+        
+    # Get end time in seconds
+    try:
+        if end_min_var.get() or end_sec_var.get():
+            end_min = int(end_min_var.get()) if end_min_var.get() else 0
+            end_sec = int(end_sec_var.get()) if end_sec_var.get() else 0
+            if end_min < 0 or end_sec < 0 or end_sec >= 60:
+                raise ValueError("Invalid end time")
+            end_time = end_min * 60 + end_sec
+            if end_time <= start_time:
+                raise ValueError("End time must be greater than start time")
+        else:
+            end_time = None
+    except ValueError as e:
+        messagebox.showerror("Invalid Input", f"Please enter valid numbers for end time: {str(e)}")
+        return
 
     # Update status
     status_var.set("Processing video... Please wait")
@@ -166,7 +206,13 @@ def process_selected_video(video_path):
     # Process the video in a separate thread
     def process_thread():
         try:
-            frames_count = extract_screenshots_and_create_document(video_path, interval_value, document_path)
+            frames_count = extract_screenshots_and_create_document(
+                video_path, 
+                interval_value, 
+                document_path,
+                start_time,
+                end_time
+            )
             root.after(0, lambda: messagebox.showinfo("Success", 
                                                f"Processing complete!\n{frames_count} screenshots captured.\nDocument saved at:\n{document_path}"))
             root.after(0, lambda: status_var.set("Ready"))
@@ -231,11 +277,46 @@ def process_youtube_link():
                     status_var.set("Ready")
                     return
                 
+                # Get start time in seconds
+                try:
+                    start_min = int(start_min_var.get()) if start_min_var.get() else 0
+                    start_sec = int(start_sec_var.get()) if start_sec_var.get() else 0
+                    if start_min < 0 or start_sec < 0 or start_sec >= 60:
+                        raise ValueError("Invalid start time")
+                    start_time = start_min * 60 + start_sec
+                except ValueError:
+                    messagebox.showerror("Invalid Input", "Please enter valid numbers for start time")
+                    status_var.set("Ready")
+                    return
+                    
+                # Get end time in seconds
+                try:
+                    if end_min_var.get() or end_sec_var.get():
+                        end_min = int(end_min_var.get()) if end_min_var.get() else 0
+                        end_sec = int(end_sec_var.get()) if end_sec_var.get() else 0
+                        if end_min < 0 or end_sec < 0 or end_sec >= 60:
+                            raise ValueError("Invalid end time")
+                        end_time = end_min * 60 + end_sec
+                        if end_time <= start_time:
+                            raise ValueError("End time must be greater than start time")
+                    else:
+                        end_time = None
+                except ValueError as e:
+                    messagebox.showerror("Invalid Input", f"Please enter valid numbers for end time: {str(e)}")
+                    status_var.set("Ready")
+                    return
+                
                 # Process the downloaded video
                 status_var.set(f"Processing video: {video_title}...")
                 
                 try:
-                    frames_count = extract_screenshots_and_create_document(video_path, interval_value, document_path)
+                    frames_count = extract_screenshots_and_create_document(
+                        video_path, 
+                        interval_value, 
+                        document_path,
+                        start_time,
+                        end_time
+                    )
                     messagebox.showinfo("Success", 
                                        f"Processing complete!\n{frames_count} screenshots captured.\nDocument saved at:\n{document_path}")
                 except Exception as e:
@@ -261,10 +342,14 @@ def process_youtube_link():
 # Tkinter Frontend
 root = Tk()
 root.title("Video Screenshot Extractor")
-root.geometry("500x350")
+root.geometry("600x400")  # Slightly wider to accommodate new time fields
 
 # Variables
-interval_var = StringVar(value="5")  # Default interval
+interval_var = StringVar(value="5")  
+start_min_var = StringVar(value="0")
+start_sec_var = StringVar(value="0")
+end_min_var = StringVar(value="")
+end_sec_var = StringVar(value="")
 youtube_url_var = StringVar()
 status_var = StringVar(value="Ready")
 
@@ -278,28 +363,58 @@ Label(main_frame, text="Video Screenshot Extractor", font=("Arial", 16, "bold"))
 # Interval setting
 interval_frame = Frame(main_frame)
 interval_frame.pack(fill="x", pady=5)
-Label(interval_frame, text="Interval (seconds):").pack(side="left", padx=5)
+Label(interval_frame, text="Interval between screenshots (seconds):").pack(side="left")
 Entry(interval_frame, textvariable=interval_var, width=5).pack(side="left", padx=5)
 
-# YouTube URL input
-youtube_frame = Frame(main_frame)
-youtube_frame.pack(fill="x", pady=10)
-Label(youtube_frame, text="YouTube URL:").pack(side="left", padx=5)
-Entry(youtube_frame, textvariable=youtube_url_var, width=40).pack(side="left", padx=5, fill="x", expand=True)
+# Trim settings
+trim_frame = Frame(main_frame)
+trim_frame.pack(fill="x", pady=10)
 
-# Buttons
-button_frame = Frame(main_frame)
-button_frame.pack(fill="x", pady=10)
-Button(button_frame, text="Process YouTube Link", command=process_youtube_link, 
-       bg="#e6e6e6", padx=10).pack(pady=5, fill="x")
-Button(button_frame, text="Select Local Video", command=select_video,
-       bg="#e6e6e6", padx=10).pack(pady=5, fill="x")
-Button(button_frame, text="Exit", command=root.quit,
-       bg="#e6e6e6", padx=10).pack(pady=5, fill="x")
+# Start time
+start_time_frame = Frame(trim_frame)
+start_time_frame.pack(side="left", padx=(0, 20))
+Label(start_time_frame, text="Start time:").pack(side="left")
+
+start_min_frame = Frame(start_time_frame)
+start_min_frame.pack(side="left", padx=5)
+Entry(start_min_frame, textvariable=start_min_var, width=3).pack(side="left")
+Label(start_min_frame, text="min").pack(side="left")
+
+start_sec_frame = Frame(start_time_frame)
+start_sec_frame.pack(side="left")
+Entry(start_sec_frame, textvariable=start_sec_var, width=3).pack(side="left")
+Label(start_sec_frame, text="sec").pack(side="left")
+
+# End time
+end_time_frame = Frame(trim_frame)
+end_time_frame.pack(side="left")
+Label(end_time_frame, text="End time (optional):").pack(side="left")
+
+end_min_frame = Frame(end_time_frame)
+end_min_frame.pack(side="left", padx=5)
+Entry(end_min_frame, textvariable=end_min_var, width=3).pack(side="left")
+Label(end_min_frame, text="min").pack(side="left")
+
+end_sec_frame = Frame(end_time_frame)
+end_sec_frame.pack(side="left")
+Entry(end_sec_frame, textvariable=end_sec_var, width=3).pack(side="left")
+Label(end_sec_frame, text="sec").pack(side="left")
+
+# Video selection
+video_frame = Frame(main_frame)
+video_frame.pack(fill="x", pady=10)
+Button(video_frame, text="Select Video File", command=select_video, width=20).pack(pady=5)
+
+# YouTube URL
+youtube_frame = Frame(main_frame)
+youtube_frame.pack(fill="x", pady=5)
+Label(youtube_frame, text="YouTube URL:").pack(anchor="w")
+Entry(youtube_frame, textvariable=youtube_url_var, width=60).pack(fill="x", pady=5)
+Button(youtube_frame, text="Process YouTube Link", command=process_youtube_link, width=20).pack(pady=5)
 
 # Status bar
 status_frame = Frame(main_frame)
-status_frame.pack(fill="x", pady=10)
+status_frame.pack(fill="x", side="bottom", pady=10)
 Label(status_frame, textvariable=status_var, bd=1, relief="sunken", anchor="w").pack(fill="x")
 
 root.mainloop()
